@@ -5,9 +5,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ CHUNK_OVERLAP= 200
 RELEVANCE_THRESHOLD = 0.25  # mínimo de similitud coseno para usar un chunk
 
 client = anthropic.Anthropic()
-embeddings = SentenceTransformerEmbeddings(model_name=EMBED_MODEL)
+embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
 
 # ── 1. INGESTA ────────────────────────────────────────────────────────────────
