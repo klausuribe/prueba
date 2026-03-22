@@ -17,9 +17,10 @@ if "ANTHROPIC_API_KEY" in st.secrets:
 
 # ── Configuración global ─────────────────────────────────────────────────────
 CHROMA_PATH = "chroma_db"
-EMBED_MODEL  = "all-MiniLM-L6-v2"  # modelo local, sin costo extra
-CHUNK_SIZE   = 800
-CHUNK_OVERLAP= 150
+EMBED_MODEL  = "paraphrase-multilingual-MiniLM-L12-v2"  # multilingüe, mejor para español
+CHUNK_SIZE   = 1200
+CHUNK_OVERLAP= 200
+RELEVANCE_THRESHOLD = 0.75  # mínimo de similitud coseno para usar un chunk
 
 client = anthropic.Anthropic()
 embeddings = SentenceTransformerEmbeddings(model_name=EMBED_MODEL)
@@ -52,11 +53,12 @@ def ingest_document(pdf_path: str, collection_name: str = "documents") -> dict:
     """Pipeline completo: carga → split → embed → guarda en ChromaDB."""
     chunks = load_and_split_pdf(pdf_path)
 
-    # Crea o añade a la colección existente
+    # Crea o añade a la colección existente (cosine para mejor relevancia)
     vectorstore = Chroma(
         collection_name=collection_name,
         embedding_function=embeddings,
         persist_directory=CHROMA_PATH,
+        collection_metadata={"hnsw:space": "cosine"},
     )
     vectorstore.add_documents(chunks)
 
@@ -97,17 +99,26 @@ def delete_collection(collection_name: str = "documents"):
 
 # ── 2. RETRIEVAL ──────────────────────────────────────────────────────────────
 
-def retrieve_context(query: str, k: int = 4,
+def retrieve_context(query: str, k: int = 6,
                      collection_name: str = "documents") -> list:
-    """Busca los k chunks más relevantes para la pregunta."""
+    """Busca los k chunks más relevantes para la pregunta, filtrando por umbral."""
     vectorstore = Chroma(
         collection_name=collection_name,
         embedding_function=embeddings,
         persist_directory=CHROMA_PATH,
+        collection_metadata={"hnsw:space": "cosine"},
     )
-    # similarity_search_with_score devuelve (doc, score) — score más bajo = más similar
+    # Con distancia coseno: score 0 = idéntico, 1 = opuesto
     results = vectorstore.similarity_search_with_score(query, k=k)
-    return results
+    # Filtrar chunks con baja relevancia (convertir distancia a similitud)
+    filtered = [
+        (doc, score) for doc, score in results
+        if (1 - score) >= RELEVANCE_THRESHOLD
+    ]
+    # Si ninguno pasa el umbral, devolver los 2 mejores de todas formas
+    if not filtered and results:
+        filtered = results[:2]
+    return filtered
 
 
 # ── 3. GENERACIÓN ─────────────────────────────────────────────────────────────
@@ -134,7 +145,7 @@ podría tener esa información."""
     for doc, score in context_docs:
         source = doc.metadata.get("source", "Desconocido")
         page   = doc.metadata.get("page", "?")
-        relevance = round((1 - score) * 100, 1)
+        relevance = round(max(0, (1 - score)) * 100, 1)
 
         context_parts.append(
             f"[Fragmento de: {source}, página {page}, "
@@ -165,7 +176,7 @@ def ask(query: str, chat_history: list = None,
     """Función principal: pregunta → contexto → respuesta con fuentes."""
 
     # 1. Recuperar contexto relevante
-    context_docs = retrieve_context(query, k=4, collection_name=collection_name)
+    context_docs = retrieve_context(query, k=6, collection_name=collection_name)
 
     if not context_docs:
         return {
