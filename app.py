@@ -37,7 +37,7 @@ with st.sidebar:
                         tmp.write(file.read())
                         tmp_path = tmp.name
 
-                    result = ingest_document(tmp_path)
+                    result = ingest_document(tmp_path, original_name=file.name)
                     os.unlink(tmp_path)
 
                     st.success(

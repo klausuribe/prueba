@@ -20,7 +20,7 @@ CHROMA_PATH = "chroma_db"
 EMBED_MODEL  = "paraphrase-multilingual-MiniLM-L12-v2"  # multilingüe, mejor para español
 CHUNK_SIZE   = 1200
 CHUNK_OVERLAP= 200
-RELEVANCE_THRESHOLD = 0.75  # mínimo de similitud coseno para usar un chunk
+RELEVANCE_THRESHOLD = 0.25  # mínimo de similitud coseno para usar un chunk
 
 client = anthropic.Anthropic()
 embeddings = SentenceTransformerEmbeddings(model_name=EMBED_MODEL)
@@ -28,7 +28,7 @@ embeddings = SentenceTransformerEmbeddings(model_name=EMBED_MODEL)
 
 # ── 1. INGESTA ────────────────────────────────────────────────────────────────
 
-def load_and_split_pdf(pdf_path: str) -> list:
+def load_and_split_pdf(pdf_path: str, original_name: str = None) -> list:
     """Carga un PDF y lo divide en chunks con overlap."""
     loader = PyPDFLoader(pdf_path)
     pages  = loader.load()
@@ -40,18 +40,22 @@ def load_and_split_pdf(pdf_path: str) -> list:
     )
     chunks = splitter.split_documents(pages)
 
+    # Usa el nombre original del archivo, no el temporal
+    source_name = original_name or Path(pdf_path).name
+
     # Agrega metadata útil a cada chunk
     for i, chunk in enumerate(chunks):
         chunk.metadata["chunk_id"]  = i
-        chunk.metadata["source"]    = Path(pdf_path).name
+        chunk.metadata["source"]    = source_name
         chunk.metadata["char_count"]= len(chunk.page_content)
 
     return chunks
 
 
-def ingest_document(pdf_path: str, collection_name: str = "documents") -> dict:
+def ingest_document(pdf_path: str, original_name: str = None,
+                    collection_name: str = "documents") -> dict:
     """Pipeline completo: carga → split → embed → guarda en ChromaDB."""
-    chunks = load_and_split_pdf(pdf_path)
+    chunks = load_and_split_pdf(pdf_path, original_name)
 
     # Crea o añade a la colección existente (cosine para mejor relevancia)
     vectorstore = Chroma(
@@ -63,7 +67,7 @@ def ingest_document(pdf_path: str, collection_name: str = "documents") -> dict:
     vectorstore.add_documents(chunks)
 
     return {
-        "filename": Path(pdf_path).name,
+        "filename": original_name or Path(pdf_path).name,
         "pages":    len(set(c.metadata.get("page", 0) for c in chunks)),
         "chunks":   len(chunks),
     }
