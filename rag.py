@@ -26,6 +26,16 @@ client = anthropic.Anthropic()
 embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
 
+def _get_vectorstore(collection_name: str = "documents") -> Chroma:
+    """Crea una instancia de Chroma con configuración consistente (cosine)."""
+    return Chroma(
+        collection_name=collection_name,
+        embedding_function=embeddings,
+        persist_directory=CHROMA_PATH,
+        collection_metadata={"hnsw:space": "cosine"},
+    )
+
+
 # ── 1. INGESTA ────────────────────────────────────────────────────────────────
 
 def load_and_split_pdf(pdf_path: str, original_name: str = None) -> list:
@@ -57,13 +67,7 @@ def ingest_document(pdf_path: str, original_name: str = None,
     """Pipeline completo: carga → split → embed → guarda en ChromaDB."""
     chunks = load_and_split_pdf(pdf_path, original_name)
 
-    # Crea o añade a la colección existente (cosine para mejor relevancia)
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        embedding_function=embeddings,
-        persist_directory=CHROMA_PATH,
-        collection_metadata={"hnsw:space": "cosine"},
-    )
+    vectorstore = _get_vectorstore(collection_name)
     vectorstore.add_documents(chunks)
 
     return {
@@ -76,11 +80,7 @@ def ingest_document(pdf_path: str, original_name: str = None,
 def get_ingested_docs(collection_name: str = "documents") -> list[str]:
     """Devuelve la lista de documentos ya procesados."""
     try:
-        vectorstore = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=CHROMA_PATH,
-        )
+        vectorstore = _get_vectorstore(collection_name)
         docs = vectorstore.get()
         sources = list(set(
             m.get("source", "Desconocido")
@@ -93,11 +93,7 @@ def get_ingested_docs(collection_name: str = "documents") -> list[str]:
 
 def delete_collection(collection_name: str = "documents"):
     """Borra todos los documentos de la colección."""
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        embedding_function=embeddings,
-        persist_directory=CHROMA_PATH,
-    )
+    vectorstore = _get_vectorstore(collection_name)
     vectorstore.delete_collection()
 
 
@@ -106,12 +102,7 @@ def delete_collection(collection_name: str = "documents"):
 def retrieve_context(query: str, k: int = 6,
                      collection_name: str = "documents") -> list:
     """Busca los k chunks más relevantes para la pregunta, filtrando por umbral."""
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        embedding_function=embeddings,
-        persist_directory=CHROMA_PATH,
-        collection_metadata={"hnsw:space": "cosine"},
-    )
+    vectorstore = _get_vectorstore(collection_name)
     # Con distancia coseno: score 0 = idéntico, 1 = opuesto
     results = vectorstore.similarity_search_with_score(query, k=k)
     # Filtrar chunks con baja relevancia (convertir distancia a similitud)
