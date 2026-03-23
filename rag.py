@@ -145,10 +145,16 @@ def delete_collection(collection_name: str = "documents") -> None:
 # ── 2. RETRIEVAL ──────────────────────────────────────────────────────────────
 
 def retrieve_context(query: str, k: int = 6,
-                     collection_name: str = "documents") -> list:
-    """Busca los k chunks mas relevantes para la pregunta, filtrando por umbral."""
+                     collection_name: str = "documents",
+                     filter_sources: list[str] | None = None) -> list:
+    """Busca los k chunks mas relevantes, opcionalmente filtrados por documento."""
     vectorstore = _get_vectorstore(collection_name)
-    results = vectorstore.similarity_search_with_score(query, k=k)
+
+    search_kwargs = {"k": k}
+    if filter_sources:
+        search_kwargs["filter"] = {"source": {"$in": filter_sources}}
+
+    results = vectorstore.similarity_search_with_score(query, **search_kwargs)
 
     # Chroma con coseno devuelve distancia en [0, 2].
     # Convertimos a similitud [0, 1]: similitud = 1 - (distancia / 2)
@@ -217,18 +223,45 @@ Pregunta del usuario: {query}"""
     return system_prompt, user_message, sources_used
 
 
+def compute_confidence(sources: list) -> dict:
+    """Calcula el nivel de confianza a partir de las relevancias de los sources."""
+    if not sources:
+        return {"score": 0.0, "level": "none", "label": "Sin datos", "color": "gray"}
+
+    relevances = [s["relevance"] for s in sources]
+    avg = sum(relevances) / len(relevances)
+    top = max(relevances)
+
+    # Ponderamos: 60% promedio + 40% mejor resultado
+    score = round(avg * 0.6 + top * 0.4, 1)
+
+    if score >= 75:
+        return {"score": score, "level": "high", "label": "Alta", "color": "green"}
+    elif score >= 50:
+        return {"score": score, "level": "medium", "label": "Media", "color": "orange"}
+    elif score >= 25:
+        return {"score": score, "level": "low", "label": "Baja", "color": "red"}
+    else:
+        return {"score": score, "level": "very_low", "label": "Muy baja", "color": "red"}
+
+
 def ask(query: str, chat_history: list = None,
-        collection_name: str = "documents") -> dict:
+        collection_name: str = "documents",
+        filter_sources: list[str] | None = None) -> dict:
     """Funcion principal: pregunta -> contexto -> respuesta con fuentes."""
 
     # 1. Recuperar contexto relevante
-    context_docs = retrieve_context(query, k=6, collection_name=collection_name)
+    context_docs = retrieve_context(
+        query, k=6, collection_name=collection_name,
+        filter_sources=filter_sources,
+    )
 
     if not context_docs:
         return {
-            "answer": "No encontre documentos procesados. Sube un PDF primero.",
+            "answer": "No encontre informacion relevante en los documentos seleccionados.",
             "sources": [],
             "context_used": [],
+            "confidence": compute_confidence([]),
         }
 
     # 2. Construir mensajes
@@ -276,4 +309,5 @@ def ask(query: str, chat_history: list = None,
         "answer": answer,
         "sources": sources,
         "context_used": context_docs,
+        "confidence": compute_confidence(sources),
     }

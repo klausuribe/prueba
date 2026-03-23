@@ -9,7 +9,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from rag import (
     ingest_document, get_ingested_docs, ask, delete_collection,
     set_embeddings, set_client, create_embeddings, create_client,
-    MAX_UPLOAD_SIZE_MB, MAX_DOCUMENTS, EMBED_MODEL,
+    MAX_UPLOAD_SIZE_MB, MAX_DOCUMENTS,
 )
 
 logging.basicConfig(
@@ -97,27 +97,78 @@ with st.sidebar:
                     if tmp_path and os.path.exists(tmp_path):
                         os.unlink(tmp_path)
 
-    # Documentos activos
+    # Documentos activos + selector
     st.divider()
     st.subheader("Documentos activos")
     docs = get_ingested_docs()
 
     if docs:
-        for doc in docs:
-            st.markdown(f"- {doc}")
+        # Selector de documentos con filtro integrado
+        selected_docs = st.multiselect(
+            "Filtrar por documento",
+            options=docs,
+            default=docs,
+            placeholder="Buscar documento...",
+            help="Selecciona en cuales documentos buscar. Por defecto se busca en todos.",
+        )
+
+        if not selected_docs:
+            st.warning("Selecciona al menos un documento para consultar.")
+
+        # Guardar seleccion en session_state
+        st.session_state.selected_docs = selected_docs
+
+        st.caption(f"{len(selected_docs)} de {len(docs)} documentos seleccionados")
 
         if st.button("Limpiar todos los documentos", type="secondary"):
             delete_collection()
             st.session_state.messages = []
+            st.session_state.pop("selected_docs", None)
             st.rerun()
     else:
         st.caption("Ninguno todavia — sube un PDF arriba")
+        st.session_state.selected_docs = []
 
     st.divider()
     st.caption("Consejos para mejores respuestas:")
     st.caption("• Se especifico en tus preguntas")
-    st.caption("• Menciona el documento si tienes varios")
+    st.caption("• Usa el filtro de documentos arriba")
     st.caption("• Pide citas textuales si las necesitas")
+
+# ── Helpers de UI ─────────────────────────────────────────────────────────────
+
+CONFIDENCE_STYLES = {
+    "high":     {"icon": "🟢", "bar_color": "#22c55e"},
+    "medium":   {"icon": "🟡", "bar_color": "#f59e0b"},
+    "low":      {"icon": "🔴", "bar_color": "#ef4444"},
+    "very_low": {"icon": "🔴", "bar_color": "#ef4444"},
+    "none":     {"icon": "⚪", "bar_color": "#9ca3af"},
+}
+
+
+def render_confidence(confidence: dict) -> None:
+    """Renderiza el indicador de confianza como badge + barra de progreso."""
+    style = CONFIDENCE_STYLES.get(confidence["level"], CONFIDENCE_STYLES["none"])
+    score = confidence["score"]
+
+    st.markdown(
+        f"{style['icon']} **Confianza: {confidence['label']}** ({score}%)"
+    )
+    st.progress(min(score / 100, 1.0))
+
+
+def render_sources(sources: list) -> None:
+    """Renderiza el expander de fuentes usadas."""
+    if not sources:
+        return
+    with st.expander(f"Fuentes usadas ({len(sources)})"):
+        for s in sources:
+            st.markdown(
+                f"**{s['source']}** — Pagina {s['page']} "
+                f"· Relevancia: {s['relevance']}%"
+            )
+            st.caption(s["preview"])
+
 
 # ── Main: Chat ────────────────────────────────────────────────────────────────
 st.title("💬 Chat con tus documentos")
@@ -126,19 +177,20 @@ st.caption("Powered by Claude + RAG · Las respuestas siempre citan la fuente")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-        if msg.get("sources"):
-            with st.expander(f"Fuentes usadas ({len(msg['sources'])})"):
-                for s in msg["sources"]:
-                    st.markdown(
-                        f"**{s['source']}** — Pagina {s['page']} "
-                        f"· Relevancia: {s['relevance']}%"
-                    )
-                    st.caption(s["preview"])
+        if msg.get("confidence"):
+            render_confidence(msg["confidence"])
+        render_sources(msg.get("sources", []))
 
 if prompt := st.chat_input("Hazle una pregunta a tus documentos..."):
 
+    selected = st.session_state.get("selected_docs", [])
+
     if not get_ingested_docs():
         st.warning("Sube al menos un PDF antes de hacer preguntas.")
+        st.stop()
+
+    if not selected:
+        st.warning("Selecciona al menos un documento en el panel lateral.")
         st.stop()
 
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -150,21 +202,16 @@ if prompt := st.chat_input("Hazle una pregunta a tus documentos..."):
             result = ask(
                 query=prompt,
                 chat_history=st.session_state.messages[:-1],
+                filter_sources=selected if len(selected) < len(get_ingested_docs()) else None,
             )
 
         st.write(result["answer"])
-
-        if result["sources"]:
-            with st.expander(f"Fuentes usadas ({len(result['sources'])})"):
-                for s in result["sources"]:
-                    st.markdown(
-                        f"**{s['source']}** — Pagina {s['page']} "
-                        f"· Relevancia: {s['relevance']}%"
-                    )
-                    st.caption(s["preview"])
+        render_confidence(result["confidence"])
+        render_sources(result["sources"])
 
     st.session_state.messages.append({
         "role": "assistant",
         "content": result["answer"],
         "sources": result["sources"],
+        "confidence": result["confidence"],
     })

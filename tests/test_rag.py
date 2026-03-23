@@ -12,6 +12,7 @@ from rag import (
     build_prompt,
     retrieve_context,
     get_ingested_docs,
+    compute_confidence,
     _score_to_relevance,
     CHUNK_SIZE,
     CHUNK_OVERLAP,
@@ -157,3 +158,51 @@ class TestGetIngestedDocs:
         mock_vs.side_effect = Exception("DB error")
         result = get_ingested_docs()
         assert result == []
+
+
+# ── Tests de compute_confidence ───────────────────────────────────────────────
+
+class TestComputeConfidence:
+    def test_empty_sources(self):
+        result = compute_confidence([])
+        assert result["level"] == "none"
+        assert result["score"] == 0.0
+
+    def test_high_confidence(self):
+        sources = [{"relevance": 90.0}, {"relevance": 85.0}, {"relevance": 80.0}]
+        result = compute_confidence(sources)
+        assert result["level"] == "high"
+        assert result["score"] >= 75
+
+    def test_medium_confidence(self):
+        sources = [{"relevance": 60.0}, {"relevance": 55.0}, {"relevance": 50.0}]
+        result = compute_confidence(sources)
+        assert result["level"] == "medium"
+        assert 50 <= result["score"] < 75
+
+    def test_low_confidence(self):
+        sources = [{"relevance": 30.0}, {"relevance": 25.0}]
+        result = compute_confidence(sources)
+        assert result["level"] == "low"
+        assert 25 <= result["score"] < 50
+
+    def test_very_low_confidence(self):
+        sources = [{"relevance": 10.0}, {"relevance": 5.0}]
+        result = compute_confidence(sources)
+        assert result["level"] == "very_low"
+        assert result["score"] < 25
+
+    def test_single_source(self):
+        sources = [{"relevance": 80.0}]
+        result = compute_confidence(sources)
+        # avg=80, top=80 -> 80*0.6 + 80*0.4 = 80
+        assert result["score"] == 80.0
+        assert result["level"] == "high"
+
+    def test_result_has_required_keys(self):
+        sources = [{"relevance": 50.0}]
+        result = compute_confidence(sources)
+        assert "score" in result
+        assert "level" in result
+        assert "label" in result
+        assert "color" in result
