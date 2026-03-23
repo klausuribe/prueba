@@ -1,6 +1,9 @@
 .env
+.env.*
 venv/
 __pycache__/
+*.pyc
 docs/
 chroma_db/
 .streamlit/secrets.toml
+.pytest_cache/
